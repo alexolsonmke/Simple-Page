@@ -1,25 +1,318 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>The Surreal Experiment</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Musical Canvas</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+        .controls {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .controls select {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 5px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .controls label {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        .message {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 18px;
+            text-align: center;
+            opacity: 0.8;
+        }
+    </style>
 </head>
 <body>
-    <div class="minimalist-art">
-        <img src="minimalist_art.jpg" alt="Minimalist Art">
+    <canvas id="canvas"></canvas>
+    <div class="controls">
+        <div>
+            <label>Scale</label>
+            <select id="scaleSelect">
+                <option value="pentatonic">Pentatonic Scale</option>
+                <option value="major">Major Scale</option>
+                <option value="minor">Minor Scale</option>
+                <option value="blues">Blues Scale</option>
+            </select>
+        </div>
+        <div>
+            <label>Instrument</label>
+            <select id="instrumentSelect">
+                <option value="sine">Pure Tone</option>
+                <option value="piano">Piano</option>
+                <option value="guitar">Guitar</option>
+                <option value="flute">Flute</option>
+                <option value="strings">Strings</option>
+            </select>
+        </div>
     </div>
-    <div class="game-container">
-        <canvas id="gameCanvas"></canvas>
-    </div>
-    <div class="generative-art">
-        <canvas id="generativeCanvas"></canvas>
-    </div>
-    <div class="surreal-experience">
-        <h1 id="surrealText">Welcome to the Surreal Experiment</h1>
-        <p>A journey into the unknown.</p>
-        <button id="surrealButton">Click me for a surprise</button>
-    </div>
-    <script src="script.js"></script>
+    <div class="message">Left click: play note | Right click: sustain note | Left click on note: stop note</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const circles = [];
+        let audioContext;
+
+        // Scales in frequencies
+        const scales = {
+            pentatonic: [261.63, 293.66, 329.63, 392.00, 440.00, 523.26], // C4 to C5
+            major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.26], // C4 to C5
+            minor: [261.63, 293.66, 311.13, 349.23, 392.00, 415.30, 466.16, 523.26], // C4 to C5
+            blues: [261.63, 311.13, 349.23, 371.00, 392.00, 466.16, 523.26] // C4 to C5
+        };
+
+        // Instrument definitions
+        const instruments = {
+            sine: {
+                oscillators: [
+                    { type: 'sine', gain: 1, detune: 0 }
+                ],
+                attack: 0.01,
+                decay: 0.1,
+                sustain: 0.7,
+                release: 0.2
+            },
+            piano: {
+                oscillators: [
+                    { type: 'triangle', gain: 1, detune: 0 },
+                    { type: 'sine', gain: 0.5, detune: 3 },
+                    { type: 'sine', gain: 0.3, detune: -3 }
+                ],
+                attack: 0.005,
+                decay: 0.07,
+                sustain: 0.5,
+                release: 0.1
+            },
+            guitar: {
+                oscillators: [
+                    { type: 'sawtooth', gain: 0.7, detune: 0 },
+                    { type: 'triangle', gain: 0.3, detune: 5 },
+                    { type: 'square', gain: 0.1, detune: -5 }
+                ],
+                attack: 0.01,
+                decay: 0.2,
+                sustain: 0.4,
+                release: 0.3
+            },
+            flute: {
+                oscillators: [
+                    { type: 'sine', gain: 0.7, detune: 0 },
+                    { type: 'sine', gain: 0.3, detune: 7 },
+                    { type: 'triangle', gain: 0.2, detune: 0 }
+                ],
+                attack: 0.08,
+                decay: 0.1,
+                sustain: 0.8,
+                release: 0.2
+            },
+            strings: {
+                oscillators: [
+                    { type: 'sine', gain: 0.5, detune: 0 },
+                    { type: 'sine', gain: 0.4, detune: 5 },
+                    { type: 'sine', gain: 0.4, detune: -5 },
+                    { type: 'sine', gain: 0.3, detune: 10 }
+                ],
+                attack: 0.1,
+                decay: 0.2,
+                sustain: 0.7,
+                release: 0.4
+            }
+        };
+
+        class Circle {
+            constructor(x, y, frequency, sustained = false) {
+                this.x = x;
+                this.y = y;
+                this.radius = 5;
+                this.maxRadius = 50;
+                this.frequency = frequency;
+                this.hue = (frequency % 100) * 3.6;
+                this.opacity = 1;
+                this.sustained = sustained;
+                this.oscillators = [];
+                this.gainNode = null;
+                this.createSound();
+            }
+
+            createSound() {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                const instrumentType = document.getElementById('instrumentSelect').value;
+                const instrument = instruments[instrumentType];
+                
+                this.gainNode = audioContext.createGain();
+                this.gainNode.connect(audioContext.destination);
+
+                // Create multiple oscillators based on instrument definition
+                instrument.oscillators.forEach(oscDef => {
+                    const osc = audioContext.createOscillator();
+                    const oscGain = audioContext.createGain();
+                    
+                    osc.type = oscDef.type;
+                    osc.frequency.value = this.frequency;
+                    osc.detune.value = oscDef.detune;
+                    
+                    oscGain.gain.value = oscDef.gain;
+                    
+                    osc.connect(oscGain);
+                    oscGain.connect(this.gainNode);
+                    
+                    this.oscillators.push({ oscillator: osc, gain: oscGain });
+                });
+
+                // Apply ADSR envelope
+                const now = audioContext.currentTime;
+                this.gainNode.gain.setValueAtTime(0, now);
+                this.gainNode.gain.linearRampToValueAtTime(0.5, now + instrument.attack);
+                this.gainNode.gain.linearRampToValueAtTime(instrument.sustain * 0.5, now + instrument.attack + instrument.decay);
+
+                if (!this.sustained) {
+                    this.gainNode.gain.linearRampToValueAtTime(0.01, now + 2);
+                }
+
+                // Start all oscillators
+                this.oscillators.forEach(osc => osc.oscillator.start());
+                
+                if (!this.sustained) {
+                    this.oscillators.forEach(osc => {
+                        osc.oscillator.stop(now + 2);
+                    });
+                }
+            }
+
+            stopSound() {
+                if (this.gainNode) {
+                    const now = audioContext.currentTime;
+                    const instrument = instruments[document.getElementById('instrumentSelect').value];
+                    this.gainNode.gain.linearRampToValueAtTime(0.01, now + instrument.release);
+                    
+                    setTimeout(() => {
+                        this.oscillators.forEach(osc => {
+                            try {
+                                osc.oscillator.stop();
+                            } catch (e) {
+                                // Ignore errors if oscillator is already stopped
+                            }
+                        });
+                    }, instrument.release * 1000);
+                }
+            }
+
+            update() {
+                if (this.sustained) {
+                    this.radius = this.maxRadius;
+                    return true;
+                }
+                this.radius += (this.maxRadius - this.radius) * 0.05;
+                this.opacity -= 0.01;
+                return this.opacity > 0;
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = `hsla(${this.hue}, 70%, 60%, ${this.sustained ? 0.8 : this.opacity})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            isPointInside(x, y) {
+                const dx = this.x - x;
+                const dy = this.y - y;
+                return Math.sqrt(dx * dx + dy * dy) <= this.radius;
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(26, 26, 26, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = circles.length - 1; i >= 0; i--) {
+                if (!circles[i].update()) {
+                    circles.splice(i, 1);
+                } else {
+                    circles[i].draw();
+                }
+            }
+
+            requestAnimationFrame(animate);
+        }
+
+        function createCircle(e, sustained = false) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Check if clicking on an existing sustained note
+            if (!sustained) {
+                for (let i = circles.length - 1; i >= 0; i--) {
+                    if (circles[i].sustained && circles[i].isPointInside(x, y)) {
+                        circles[i].stopSound();
+                        circles.splice(i, 1);
+                        return;
+                    }
+                }
+            }
+            
+            const currentScale = scales[document.getElementById('scaleSelect').value];
+            const frequencyIndex = Math.floor((y / canvas.height) * currentScale.length);
+            const frequency = currentScale[frequencyIndex];
+            
+            circles.push(new Circle(x, y, frequency, sustained));
+        }
+
+        canvas.addEventListener('click', (e) => createCircle(e, false));
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            createCircle(e, true);
+        });
+        
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            createCircle(e.touches[0], false);
+        });
+
+        window.addEventListener('resize', resizeCanvas);
+
+        resizeCanvas();
+        animate();
+    </script>
 </body>
 </html>
-
